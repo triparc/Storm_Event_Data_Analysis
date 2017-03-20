@@ -1,0 +1,250 @@
+---
+title: "Storm Data Events Analytics: Analysis of storms and other significant weather phenomena
+        across US"
+author: "Rama Tripathy"
+date: "March 12, 2017"
+output: html_document
+---
+
+## Synopsis  
+
+In this report, we analyze the Storms data collected from National Weather Services(NWS) and other sources including media reports and try to answer these questions:  
+1. Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?  
+2. Across the United States, which types of events have the greatest economic consequences?  
+
+## Setup options
+### Software Environment  
+1. R version 3.0.2  
+2. Platform: x86_64-windows  
+3. Attached base packages:  
+- data.table package to directly read zip/.bz2/csv format      
+- plyr and dplyr to manipulate the data    
+- ggplot2 package for plots    
+- xtable package to produce nice tables    
+-   
+4. Setup local directory
+5. Setup global options  
+```{r}
+knitr::opts_knit$set(warn=-1) #surpress warnings
+knitr::opts_knit$set(echo = TRUE)
+library(knitr)
+library("data.table")
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(xtable)
+# install package 'fiftystater' from github
+# install.packages("devtools")
+# devtools::install_github("wmurphyrd/fiftystater")
+library(fiftystater)
+
+knitr::opts_knit$set(root.dir = "E:\\Coursera\\Reproducible_Research\\Storms_Data_Analytics\\")
+```
+
+## Data Processing  
+###  Read raw Data from web site  
+```{r}
+knitr::opts_knit$set(warn=-1) #surpress warnings
+url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(url,destfile="repdata-data-StormData.csv.bz2")
+stormdata <- read.table("StormData.csv.bz2", header=TRUE, quote="\"", sep=",", 
+                        stringsAsFactors = FALSE)
+```
+### Check dimension and the variables and their types   
+```{r}
+glimpse(stormdata)
+```
+### Take an intial look into the storm data  
+```{r}
+head(stormdata)
+```
+### Check summary to:  
+- identify  missing values  
+- minimum and maximum field values to determine possible outliers  
+```{r}
+summary(stormdata)
+```
+- Field F (Turnado F scale) has NA's :843563   
+- Field LATITUDE has NA's   :47    
+- Field LONGITUDE has NA's   :40   
+- We can use Imputation tools like Mice, HIMSC to impute missing values    
+- But for our analysis, we will not be using these fields, so ignoring them  
+
+### Identify fields to be used for our analysis  
+1. We will need the following fields:  
+Location - STATE, COUNTY, LATITUDE, LONGITUDE, LATITUDE_E, LONGITUDE_)  
+Event type (EVTYPE)  
+Beginning/end date and time (BGN_DATE, BGN_TIME, TIME_ZONE, END_DATE, END_TIME)  
+Health Impact - FATALITIES, INJURIES  
+Property Damage - comprised of two parts:  
+- a 3-significant numeric field (PROPDMG)  
+- a field to indicate magnitude (K = 1000, M = Million...) PROPDMGEXP  
+Corp Damage - comprised of two parts:  
+- a 3-significant numeric field (CROPDMG)  
+- a field to indicate magnitude (K = 1000, M = Million...) CROPDMGEXP  
+```{r}
+stormdata <- select(stormdata, STATE, COUNTY, LATITUDE, LONGITUDE, 
+                    LATITUDE_E, LONGITUDE_, EVTYPE, BGN_DATE, BGN_TIME, 
+                    TIME_ZONE, END_DATE, END_TIME, FATALITIES, INJURIES,
+                    PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP, REFNUM)
+```
+
+2. Transform STATE, EVTYPE to factor variables
+```{r}
+stormdata$STATE <- as.factor(stormdata$STATE)
+stormdata$EVTYPE <- as.factor(stormdata$EVTYPE)
+stormdata$PROPDMGEXP <- as.character(stormdata$PROPDMGEXP)
+stormdata$CROPDMGEXP <- as.character(stormdata$CROPDMGEXP)
+```
+
+### Calculate actual Property/Crop Damages in thousands 
+1. We will convert the magnitude field to numeric value and multiply it with  
+property/crop damage field to calculate actual vale.  
+2. PROPDMGEXP column specifies the amount for PROPDMG in:  
+- Hundreds(H/0/1/2/3/4/5/6/7/8)  
+- Thousands(K)  
+- Millions(M)  
+- Billions(B)
+- consider blank/-/+/? values as 10 for PROPDMGEXP  
+
+3. CROPDMGEXP column specifies the amount for CROPDMG in:  
+- Hundreds(0/1/2)  
+- Thousands(K)  
+- Millions(M)  
+- Billions(B)
+- consider blank/-/+/? values as 10 for CROPDMGEXP
+4. We will use switch function for this conversion  
+```{r}
+magnitudeValue <- function(value, magnitude){
+             v <- switch(magnitude,
+                      H = .1, h = .1,
+                      K = 1, k = 1, 
+                      M = 1000, m = 1000, 
+                      B = 1000000, b = 1000000, 
+                      Otherwise = .01)
+             if(!is.null(v))
+               value <- value*v
+             else  value <- .01*value
+             value
+             }
+```
+5. Calculate property damage, crop damage and total damage  
+total economic impact= property damage + crop damage  
+```{r}
+knitr::opts_knit$set(warn=-1) #surpress warnings
+stormdata <- as.data.frame(stormdata %>% group_by(REFNUM) %>% mutate(PropertyDamage=magnitudeValue(PROPDMG,PROPDMGEXP)))
+stormdata <- as.data.frame(stormdata %>% group_by(REFNUM) %>% mutate(CropDamage=magnitudeValue(CROPDMG,CROPDMGEXP)))
+stormdata$TotalDamage <- stormdata$CropDamage + stormdata$PropertyDamage
+```
+### Calculate total health impact
+total health impact= fatalities + injuries
+```{r}
+stormdata$TotalHealthImpact <- stormdata$FATALITIES + stormdata$INJURIES
+```
+### Take alook into the new fields in  storm data now
+```{r}
+head(select(stormdata, FATALITIES,INJURIES,TotalHealthImpact,
+             PropertyDamage,CropDamage,TotalDamage))
+```
+Free up some memory  
+```{r}
+gc(verbose = FALSE)
+```
+## Results
+### Analysis across US
+### Which types of events are most harmful to population health?
+Aggregate and find most harmful event type to health
+```{r}
+knitr::opts_knit$set(cache = TRUE)
+# Number of injuries by eventtype
+injuriesbyev <- aggregate(INJURIES ~ EVTYPE, data = stormdata, FUN = sum)
+#
+# Number of fatalities by event type
+fatalitiesbyev <- aggregate(FATALITIES ~ EVTYPE, data = stormdata, FUN = sum)
+#
+# Total Health Impact by event type
+hibyev <- merge(injuriesbyev, fatalitiesbyev) # merge by event tye
+# Calculate the total health loss by eventtype
+hibyev <- mutate(hibyev, totalbyev = INJURIES + FATALITIES ) %>% setorder(-totalbyev) 
+rm(injuriesbyev)
+rm(fatalitiesbyev)
+```
+1. Most harmful events to population health are:  
+```{r}
+library(xtable)
+kable(head(hibyev,20))
+```
+2. Plot Top 10 most harmful events data using ggplot2 - using bar charts  
+```{r}
+library(ggplot2)
+ggplot(hibyev[1:10,], aes(x=EVTYPE, y = totalbyev, fill = EVTYPE)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1)) + 
+  xlab("Event Type") + 
+  ylab("Casualities") +
+  ggtitle("Most Harmful Events to population health")
+```
+### Which types of events have the greatest economic consequences across US?
+Aggregate and find most harmful event type to economy
+```{r}
+knitr::opts_knit$set(cache = TRUE)
+# Property damage by eventtype
+pdmgbyev <- aggregate(PROPDMG ~ EVTYPE, data = stormdata, FUN = sum)
+# Number of fatalities by event type
+cdmgbyev <- aggregate(CROPDMG ~ EVTYPE, data = stormdata, FUN = sum)
+tdmgbyev <- merge(pdmgbyev, cdmgbyev) # merge by event tye
+# Calculate the total damage by eventtype
+tdmgbyev <- mutate(tdmgbyev, TotalDamage = PROPDMG + CROPDMG ) %>% setorder(-TotalDamage)
+rm(pdmgbyev)
+rm(cdmgbyev)
+```
+1. Top events having greatest economic consequences:
+```{r}
+library(xtable)
+kable(head(tdmgbyev,20))
+```
+2. Plot Economic harmful events across US data using ggplot2 - using bar charts  
+```{r}
+library(ggplot2)
+ggplot(tdmgbyev[1:10,], aes(x=EVTYPE, y = TotalDamage, fill = EVTYPE)) + 
+  geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 70, hjust = 1)) + 
+  ylab("Total Damage in thousand") + 
+  xlab("Event Type") +
+  ggtitle("Most Economic Harmful Events across US")
+```
+### Analysis of Storm Even Impact by each State in US  
+1. Aggregate and find most harmful to health impact by state  
+```{r}
+knitr::opts_knit$set(cache = TRUE)
+# Number of injuries by eventtype by stste
+injuriesbyst <- aggregate(INJURIES ~ EVTYPE + STATE, data = stormdata, 
+                          FUN = sum)
+#
+# Number of fatalities by event type
+fatalitiesbyst <- aggregate(FATALITIES ~ EVTYPE + STATE, data = stormdata, 
+                            FUN = sum)
+#
+# Total Health Impact by event type
+hibyevst <- merge(injuriesbyst, fatalitiesbyst) #merge by event type and state
+# Calculate the total health loss by eventtype
+hibyevst <- mutate(hibyevst, totalbyst = INJURIES + FATALITIES ) %>% setorder(-totalbyst) 
+rm(injuriesbyst)
+rm(fatalitiesbyst)
+```
+2. Aggregate and find most harmful event type to economy by state 
+```{r}
+knitr::opts_knit$set(cache = TRUE)
+# Property damage by eventtype
+pdmgbyst <- aggregate(PROPDMG ~ EVTYPE + STATE, data = stormdata, FUN = sum)
+# Number of fatalities by event type
+cdmgbyst <- aggregate(CROPDMG ~ EVTYPE + STATE, data = stormdata, FUN = sum)
+tdmgbyevst <- merge(pdmgbyst, cdmgbyst) # merge by event type and state
+# Calculate the total damage by eventtype
+tdmgbyevst <- mutate(tdmgbyevst, TotalDamage = PROPDMG + CROPDMG ) %>% setorder(-TotalDamage)
+rm(pdmgbyst)
+rm(cdmgbyst)
+```
+
+
+
